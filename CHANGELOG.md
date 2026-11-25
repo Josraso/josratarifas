@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2 — 2026-11-25
+
+- Arreglado: la pestaña «Precios por tarifa» no cargaba los productos y daba «El servidor no ha devuelto una respuesta válida».
+- Si vuelve a fallar la carga, el aviso enseña lo que ha contestado el servidor, para saber el motivo.
+
 ## 1.0.1 — 2026-11-25
 
 - Arreglado: la instalación daba error 500 con el modo depuración activado (faltaba la parte del módulo que avisa de las actualizaciones).

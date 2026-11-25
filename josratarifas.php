@@ -38,7 +38,7 @@ class Josratarifas extends Module
     {
         $this->name = 'josratarifas';
         $this->tab = 'pricing_promotion';
-        $this->version = '1.0.1';
+        $this->version = '1.0.2';
         $this->author = 'josra';
         $this->need_instance = 0;
         $this->bootstrap = true;
@@ -560,6 +560,21 @@ class Josratarifas extends Module
             . ($withToken ? '&token=' . Tools::getAdminTokenLite('AdminModules') : '');
     }
 
+    /**
+     * URL de la página de configuración tal como se ha abierto (ruta Symfony en PS 8/9,
+     * con su _token), para enlaces GET que no deben pasar por una redirección.
+     */
+    protected function currentPageUrl()
+    {
+        $uri = isset($_SERVER['REQUEST_URI']) ? (string) $_SERVER['REQUEST_URI'] : '';
+        if ($uri === '' || strpos($uri, 'josratarifas_') !== false) {
+            return $this->adminUrl();
+        }
+        $uri = preg_replace('/#.*$/', '', $uri);
+
+        return Tools::getShopDomainSsl(true) . $uri . (strpos($uri, '?') === false ? '?' : '');
+    }
+
     public function getContent()
     {
         $this->selfRepair();
@@ -726,7 +741,7 @@ class Josratarifas extends Module
             'jt_active' => $activeTab,
             'jt_tariffs' => $tariffs,
             'jt_ajax_url' => $this->adminUrl() . '&josratarifas_ajax=1',
-            'jt_export_url' => $this->adminUrl() . '&josratarifas_export=1',
+            'jt_export_url' => $this->currentPageUrl() . '&josratarifas_export=1',
             'jt_import_action' => $this->adminUrl(),
             'jt_tax_input' => (int) $settings['tax_input'],
             'jt_settings_form' => $this->renderSettingsForm(),
@@ -932,14 +947,23 @@ class Josratarifas extends Module
 
     protected function jsonExit(array $data)
     {
+        // Fuera cualquier salida previa (avisos de PHP en modo depuración, HTML del controlador)
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        $flags = defined('JSON_INVALID_UTF8_SUBSTITUTE') ? JSON_INVALID_UTF8_SUBSTITUTE : 0;
+        $json = json_encode($data, $flags | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        if ($json === false) {
+            $json = json_encode(array('ok' => false, 'error' => 'No se pudo preparar la respuesta: ' . json_last_error_msg() . '.'));
+        }
         header('Content-Type: application/json; charset=utf-8');
-        echo json_encode($data);
+        echo $json;
         exit;
     }
 
     protected function ajaxResponse()
     {
-        $action = (string) Tools::getValue('action');
+        $action = (string) Tools::getValue('jt_action');
         $idGroup = (int) Tools::getValue('id_group');
         if (!$this->isTariffGroup($idGroup)) {
             $this->jsonExit(array('ok' => false, 'error' => 'Ese grupo no está marcado como tarifa (o es el grupo del PVP). Revisa los ajustes y recarga la página.'));

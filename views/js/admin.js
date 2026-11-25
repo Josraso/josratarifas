@@ -12,7 +12,10 @@
       return;
     }
 
-    var ajaxUrl = app.getAttribute('data-ajax-url');
+    // Se llama a la misma página de configuración en la que estamos (ruta Symfony en PS 8/9,
+    // con su _token), para que no haya redirecciones que pierdan los parámetros
+    var pageUrl = window.location.href.split('#')[0];
+    var ajaxUrl = pageUrl + (pageUrl.indexOf('?') === -1 ? '?' : '&') + 'josratarifas_ajax=1';
     var taxInput = app.getAttribute('data-tax-input') === '1';
     var tbody = table.querySelector('tbody');
     var groupSel = document.getElementById('jt-group');
@@ -66,7 +69,11 @@
           try {
             data = JSON.parse(text);
           } catch (e) {
-            throw new Error('El servidor no ha devuelto una respuesta válida (código ' + r.status + '). Puede que la sesión del back-office haya caducado: recarga la página.');
+            var snippet = text.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
+              .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 300);
+            throw new Error('El servidor no ha devuelto datos de la rejilla (código ' + r.status + '). ' +
+              (snippet ? 'Ha respondido: «' + snippet + '»' : 'La respuesta ha llegado vacía.') +
+              ' Si es la página de acceso, la sesión ha caducado: recarga la página.');
           }
           return data;
         });
@@ -113,7 +120,7 @@
       state.loading = true;
       showStatus('', '');
       tbody.innerHTML = '<tr><td colspan="9" class="text-center">Cargando…</td></tr>';
-      request({ action: 'list', q: qInput.value, filter: filterSel.value, page: page || 1 })
+      request({ jt_action: 'list', q: qInput.value, filter: filterSel.value, page: page || 1 })
         .then(function (data) {
           state.loading = false;
           if (!data.ok) {
@@ -171,7 +178,7 @@
         input.disabled = true;
         var msg = tr.querySelector('.jt-msg');
         msg.innerHTML = '<span class="text-muted">Guardando…</span>';
-        request({ action: 'save', id_product: id, value: input.value.trim() }, 'POST')
+        request({ jt_action: 'save', id_product: id, value: input.value.trim() }, 'POST')
           .then(function (data) {
             if (!data.ok) {
               tr.outerHTML = rowHtml(row);
