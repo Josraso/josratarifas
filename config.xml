@@ -2,7 +2,7 @@
 <module>
     <name>josratarifas</name>
     <displayName><![CDATA[Tarifas por grupo de cliente]]></displayName>
-    <version><![CDATA[1.0.0]]></version>
+    <version><![CDATA[1.0.1]]></version>
     <description><![CDATA[Precio fijo por producto para cada grupo de cliente (tarifa), con edición en línea, importación CSV y PVP original en la ficha y los listados.]]></description>
     <author><![CDATA[josra]]></author>
     <tab><![CDATA[pricing_promotion]]></tab>

@@ -38,7 +38,7 @@ class Josratarifas extends Module
     {
         $this->name = 'josratarifas';
         $this->tab = 'pricing_promotion';
-        $this->version = '1.0.0';
+        $this->version = '1.0.1';
         $this->author = 'josra';
         $this->need_instance = 0;
         $this->bootstrap = true;
@@ -58,6 +58,18 @@ class Josratarifas extends Module
     public function getUpdater()
     {
         return new JosratarifasUpdater($this);
+    }
+
+    /** Aviso periódico al servidor de actualizaciones (solo en el back-office) */
+    public function hookActionAdminControllerSetMedia($params)
+    {
+        $this->getUpdater()->maybePing();
+    }
+
+    /** PS 8.1+: la versión nueva aparece en Gestor de módulos > Actualizaciones */
+    public function hookActionListModules($params)
+    {
+        return $this->getUpdater()->getNativeModuleList();
     }
 
     protected function getOwnHooks()

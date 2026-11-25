@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1 — 2026-11-25
+
+- Arreglado: la instalación daba error 500 con el modo depuración activado (faltaba la parte del módulo que avisa de las actualizaciones).
+
 ## 1.0.0 — 2026-11-25
 
 Primera versión.
