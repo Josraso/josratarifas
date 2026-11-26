@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2 — 2026-11-26
+
+- Arreglado de verdad el bloque de la ficha del producto en PS 9.1 y posteriores: PrestaShop limpia el contenido de la pestaña Módulos (quita scripts, botones, campos y atributos data-) y el bloque se quedaba en «Cargando…» o enseñaba el código como texto. Ahora el bloque se pinta con un archivo JS aparte que se carga en la cabecera de la ficha.
+- Rejilla: los iconos de ver y editar el producto van en su propia columna a la izquierda, antes del ID.
+
 ## 1.1.1 — 2026-11-26
 
 - Arreglado: en la ficha del producto (pestaña Módulos) el bloque de tarifas se quedaba en «Cargando…».

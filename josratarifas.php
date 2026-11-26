@@ -40,7 +40,7 @@ class Josratarifas extends Module
     {
         $this->name = 'josratarifas';
         $this->tab = 'pricing_promotion';
-        $this->version = '1.1.1';
+        $this->version = '1.1.2';
         $this->author = 'josra';
         $this->need_instance = 0;
         $this->bootstrap = true;
@@ -66,6 +66,18 @@ class Josratarifas extends Module
     public function hookActionAdminControllerSetMedia($params)
     {
         $this->getUpdater()->maybePing();
+
+        // JS del bloque de la ficha del producto. Va aparte porque desde PS 9.1 el contenido de la
+        // pestaña Módulos se limpia (HTMLPurifier) y se quitan los <script>, botones y campos.
+        $controller = $this->context->controller;
+        if (!$controller || !method_exists($controller, 'addJS')) {
+            return;
+        }
+        $name = isset($controller->controller_name) ? (string) $controller->controller_name : '';
+        if ($name !== '' && $name !== 'AdminProducts') {
+            return;
+        }
+        $controller->addJS($this->_path . 'views/js/product.js?v=' . $this->version);
     }
 
     /** PS 8.1+: la versión nueva aparece en Gestor de módulos > Actualizaciones */
@@ -1663,15 +1675,14 @@ class Josratarifas extends Module
 
         $idProduct = isset($params['id_product']) ? (int) $params['id_product'] : (int) Tools::getValue('id_product');
         $settings = $this->getSettings();
-        // El JS va dentro de la página: no depende de que se cargue un archivo aparte ni de su caché
-        $js = (string) Tools::file_get_contents(dirname(__FILE__) . '/views/js/product.js');
+        // Solo HTML que deja pasar HTMLPurifier (PS 9.1+): sin script, sin data-*, sin botones ni campos.
+        // El JS (views/js/product.js, cargado en actionAdminControllerSetMedia) monta la tabla y el botón.
         $this->context->smarty->assign(array(
             'jt_id_product' => $idProduct,
             'jt_has_tariffs' => (bool) $this->getTariffGroups(),
             'jt_ajax_url' => $this->ajaxUrl(),
             'jt_config_url' => $this->context->link->getAdminLink('AdminModules', true, array(), array('configure' => $this->name)),
             'jt_tax_input' => (int) $settings['tax_input'],
-            'jt_inline_js' => str_replace('</script', '<\\/script', $js),
         ));
 
         return $this->display(__FILE__, 'views/templates/admin/product.tpl');

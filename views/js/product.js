@@ -30,18 +30,37 @@
 
   function init() {
     var box = document.getElementById('josratarifas-product');
-    if (!box || box.getAttribute('data-ready') === '1' || !box.querySelector('tbody')) {
+    var app = box ? box.querySelector('#jt-p-app') : null;
+    if (!box || !app || box.getAttribute('data-jt-ready') === '1' || app.querySelector('.jt-p-table')) {
       return;
     }
-    box.setAttribute('data-ready', '1');
+    // Desde PS 9.1 el HTML del hook pasa por HTMLPurifier (sin data-*, <script>, botones ni campos):
+    // la configuración va en elementos ocultos y la interfaz se construye aquí.
+    var idEl = document.getElementById('jt-p-id');
+    var taxEl = document.getElementById('jt-p-tax');
+    var ajaxEl = document.getElementById('jt-p-ajax');
+    var idProduct = idEl ? idEl.textContent.trim() : '';
+    var taxInput = taxEl ? taxEl.textContent.trim() === '1' : false;
+    var ajaxUrl = ajaxEl ? (ajaxEl.getAttribute('href') || '') : '';
+    if (!idProduct || !ajaxUrl) {
+      app.innerHTML = '<div class="alert alert-danger">No se ha podido leer la configuración del bloque de tarifas (producto o dirección AJAX).</div>';
+      return;
+    }
+    box.setAttribute('data-jt-ready', '1');
+    var labelIn = taxInput ? 'con IVA' : 'sin IVA';
+    var labelOut = taxInput ? 'sin IVA' : 'con IVA';
+    app.innerHTML =
+      '<p class="jt-p-info text-muted">Cargando precios…</p>' +
+      '<div class="table-responsive"><table class="table jt-p-table">' +
+      '<thead><tr><th>Tarifa (grupo)</th><th class="text-right">Precio ' + labelIn + '</th><th class="text-right">Precio ' + labelOut + '</th><th>Aviso</th></tr></thead>' +
+      '<tbody></tbody></table></div>' +
+      '<div class="jt-p-status"></div>' +
+      '<p><button type="button" class="btn btn-primary jt-p-save">Guardar precios de tarifa</button></p>';
 
-    var ajaxUrl = box.getAttribute('data-ajax-url');
-    var idProduct = box.getAttribute('data-id-product');
-    var taxInput = box.getAttribute('data-tax-input') === '1';
-    var tbody = box.querySelector('tbody');
-    var info = box.querySelector('.jt-p-info');
-    var status = box.querySelector('.jt-p-status');
-    var saveBtn = box.querySelector('.jt-p-save');
+    var tbody = app.querySelector('tbody');
+    var info = app.querySelector('.jt-p-info');
+    var status = app.querySelector('.jt-p-status');
+    var saveBtn = app.querySelector('.jt-p-save');
     var dec = taxInput ? 2 : 6;
     var original = {};
 
@@ -168,11 +187,10 @@
     try {
       init();
     } catch (e) {
-      var box = document.getElementById('josratarifas-product');
-      var info = box ? box.querySelector('.jt-p-info') : null;
-      if (info) {
-        info.className = 'jt-p-info text-danger';
-        info.textContent = 'Error al preparar el bloque de tarifas: ' + (e && e.message ? e.message : e);
+      var app = document.getElementById('jt-p-app');
+      if (app) {
+        app.innerHTML = '<div class="alert alert-danger"></div>';
+        app.firstChild.textContent = 'Error al preparar el bloque de tarifas: ' + (e && e.message ? e.message : e);
       }
     }
   }
@@ -186,4 +204,22 @@
       setTimeout(safeInit, 50);
     }
   }, true);
+  // Por si el contenido de la pestaña Módulos se pinta más tarde
+  if (window.MutationObserver) {
+    var obs = new MutationObserver(function () {
+      if (document.getElementById('jt-p-app')) {
+        safeInit();
+        var box = document.getElementById('josratarifas-product');
+        if (box && box.getAttribute('data-jt-ready') === '1') {
+          obs.disconnect();
+        }
+      }
+    });
+    var startObs = function () {
+      if (document.body) {
+        obs.observe(document.body, { childList: true, subtree: true });
+      }
+    };
+    if (document.body) { startObs(); } else { document.addEventListener('DOMContentLoaded', startObs); }
+  }
 })();

@@ -93,7 +93,7 @@
     var prevBtn = document.getElementById('jt-prev');
     var nextBtn = document.getElementById('jt-next');
     var state = { page: 1, pages: 1, loading: false, sort: 'id', dir: 'desc', rows: {} };
-    var COLS = 10;
+    var COLS = 11;
 
     function showStatus(type, text) {
       status.innerHTML = text ? '<div class="alert alert-' + type + '">' + esc(text) + '</div>' : '';
@@ -137,10 +137,10 @@
     function links(row) {
       var html = '';
       if (row.url_front) {
-        html += ' <a href="' + esc(row.url_front) + '" target="_blank" rel="noopener" title="Ver en la tienda (pestaña nueva)"><i class="icon-eye"></i></a>';
+        html += '<a href="' + esc(row.url_front) + '" target="_blank" rel="noopener" title="Ver en la tienda (pestaña nueva)"><i class="icon-eye"></i></a>';
       }
       if (row.url_edit) {
-        html += ' <a href="' + esc(row.url_edit) + '" target="_blank" rel="noopener" title="Editar el producto (pestaña nueva)"><i class="icon-pencil"></i></a>';
+        html += (html ? ' ' : '') + '<a href="' + esc(row.url_edit) + '" target="_blank" rel="noopener" title="Editar el producto (pestaña nueva)"><i class="icon-pencil"></i></a>';
       }
       return html;
     }
@@ -149,9 +149,10 @@
       var value = editableValue(row);
       var cls = row.warn ? ' class="danger"' : (row.active ? '' : ' class="text-muted"');
       return '<tr data-id="' + row.id + '"' + cls + '>' +
+        '<td class="text-nowrap" style="white-space:nowrap">' + links(row) + '</td>' +
         '<td>' + row.id + '</td>' +
         '<td>' + esc(row.ref) + '</td>' +
-        '<td>' + esc(row.name) + (row.active ? '' : ' <span class="label label-default">inactivo</span>') + links(row) + '</td>' +
+        '<td>' + esc(row.name) + (row.active ? '' : ' <span class="label label-default">inactivo</span>') + '</td>' +
         '<td>' + esc(row.tax_name) + ' · ' + num(row.rate, 2).replace(/,00$/, '') + ' %</td>' +
         '<td class="text-right">' + num(row.pvp, 6) + '</td>' +
         '<td class="text-right">' + num(row.pvp_ti, 2) + '</td>' +

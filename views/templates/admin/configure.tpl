@@ -130,6 +130,7 @@
             <table class="table" id="jt-table">
               <thead>
                 <tr>
+                  <th style="width:1%"></th>
                   <th><a href="#" class="jt-sort" data-sort="id">ID</a></th>
                   <th><a href="#" class="jt-sort" data-sort="ref">Referencia</a></th>
                   <th><a href="#" class="jt-sort" data-sort="name">Producto</a></th>
@@ -142,7 +143,7 @@
                   <th></th>
                 </tr>
               </thead>
-              <tbody><tr><td colspan="10" class="text-center">Cargando…</td></tr></tbody>
+              <tbody><tr><td colspan="11" class="text-center">Cargando…</td></tr></tbody>
             </table>
           </div>
           <div class="row">
