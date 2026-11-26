@@ -53,13 +53,26 @@
         Object.keys(data).forEach(function (k) { body.append(k, data[k]); });
         opts.body = body;
       }
-      return fetch(url, opts).then(function (r) {
+      var timer = null;
+      if (window.AbortController) {
+        var ctrl = new AbortController();
+        opts.signal = ctrl.signal;
+        timer = setTimeout(function () { ctrl.abort(); }, 20000);
+      }
+      return fetch(url, opts).catch(function (e) {
+        throw new Error((e && e.name === 'AbortError')
+          ? 'El servidor no ha contestado en 20 segundos (' + url.split('&token')[0] + ').'
+          : 'No se pudo conectar con ' + url.split('&token')[0] + ': ' + (e && e.message ? e.message : e));
+      }).then(function (r) {
+        if (timer) {
+          clearTimeout(timer);
+        }
         return r.text().then(function (text) {
           try {
             return JSON.parse(text);
           } catch (e) {
             var snippet = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 300);
-            throw new Error('El servidor no ha devuelto datos (código ' + r.status + '). ' +
+            throw new Error('El servidor no ha devuelto datos (código ' + r.status + ', ' + r.url.split('&token')[0] + '). ' +
               (snippet ? 'Ha respondido: «' + snippet + '»' : 'La respuesta ha llegado vacía.') + ' Si la sesión ha caducado, recarga la página.');
           }
         });
@@ -151,9 +164,26 @@
     load();
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
+  function safeInit() {
+    try {
+      init();
+    } catch (e) {
+      var box = document.getElementById('josratarifas-product');
+      var info = box ? box.querySelector('.jt-p-info') : null;
+      if (info) {
+        info.className = 'jt-p-info text-danger';
+        info.textContent = 'Error al preparar el bloque de tarifas: ' + (e && e.message ? e.message : e);
+      }
+    }
   }
+
+  // Se intenta al momento, al terminar de cargar la página y al abrir la pestaña Módulos
+  safeInit();
+  document.addEventListener('DOMContentLoaded', safeInit);
+  window.addEventListener('load', safeInit);
+  document.addEventListener('click', function (ev) {
+    if (ev.target && ev.target.closest && ev.target.closest('.modules-list-button, .module-render-container, [href*="modules"], [data-target*="module"]')) {
+      setTimeout(safeInit, 50);
+    }
+  }, true);
 })();

@@ -28,4 +28,4 @@
     {/if}
   </div>
 </div>
-<script src="{$jt_js_url|escape:'html':'UTF-8'}"></script>
+<script>{$jt_inline_js nofilter}</script>

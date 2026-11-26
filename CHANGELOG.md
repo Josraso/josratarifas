@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 — 2026-11-26
+
+- Arreglado: en la ficha del producto (pestaña Módulos) el bloque de tarifas se quedaba en «Cargando…».
+- El bloque se repara solo al abrir la ficha si se subieron los archivos sin abrir Configurar (tabla del historial, controlador interno y actualización pendiente).
+- Si el servidor no contesta o devuelve un error, el bloque lo dice (con la dirección llamada) en vez de quedarse cargando.
+
 ## 1.1.0 — 2026-11-26
 
 - Rejilla: columna con el IVA de cada producto (regla y %).

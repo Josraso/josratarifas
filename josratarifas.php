@@ -40,7 +40,7 @@ class Josratarifas extends Module
     {
         $this->name = 'josratarifas';
         $this->tab = 'pricing_promotion';
-        $this->version = '1.1.0';
+        $this->version = '1.1.1';
         $this->author = 'josra';
         $this->need_instance = 0;
         $this->bootstrap = true;
@@ -1654,15 +1654,24 @@ class Josratarifas extends Module
      */
     public function hookDisplayAdminProductsExtra($params)
     {
+        // Autorreparación: si se subieron los archivos sin abrir Configurar, aquí todavía
+        // faltarían la tabla del historial y el controlador del AJAX
+        if (!(int) Tab::getIdFromClassName(self::AJAX_CONTROLLER)) {
+            $this->selfRepair();
+        }
+        $this->getUpdater()->runPendingUpgrades();
+
         $idProduct = isset($params['id_product']) ? (int) $params['id_product'] : (int) Tools::getValue('id_product');
         $settings = $this->getSettings();
+        // El JS va dentro de la página: no depende de que se cargue un archivo aparte ni de su caché
+        $js = (string) Tools::file_get_contents(dirname(__FILE__) . '/views/js/product.js');
         $this->context->smarty->assign(array(
             'jt_id_product' => $idProduct,
             'jt_has_tariffs' => (bool) $this->getTariffGroups(),
             'jt_ajax_url' => $this->ajaxUrl(),
             'jt_config_url' => $this->context->link->getAdminLink('AdminModules', true, array(), array('configure' => $this->name)),
             'jt_tax_input' => (int) $settings['tax_input'],
-            'jt_js_url' => $this->_path . 'views/js/product.js?v=' . $this->version,
+            'jt_inline_js' => str_replace('</script', '<\\/script', $js),
         ));
 
         return $this->display(__FILE__, 'views/templates/admin/product.tpl');
