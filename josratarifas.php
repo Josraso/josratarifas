@@ -15,6 +15,8 @@ require_once dirname(__FILE__) . '/classes/JosratarifasUpdater.php';
 class Josratarifas extends Module
 {
     const TABLE = 'josratarifas_precio';
+    const TABLE_HISTORY = 'josratarifas_historial';
+    const AJAX_CONTROLLER = 'AdminJosratarifasAjax';
     const CONF_SETTINGS = 'JOSRATARIFAS_SETTINGS';
     const MIN_PS = '8.2.0';
     const PAGE_SIZE = 50;
@@ -38,7 +40,7 @@ class Josratarifas extends Module
     {
         $this->name = 'josratarifas';
         $this->tab = 'pricing_promotion';
-        $this->version = '1.0.2';
+        $this->version = '1.1.0';
         $this->author = 'josra';
         $this->need_instance = 0;
         $this->bootstrap = true;
@@ -79,6 +81,7 @@ class Josratarifas extends Module
             'displayProductPriceBlock',
             'actionProductDelete',
             'actionObjectGroupDeleteAfter',
+            'displayAdminProductsExtra',
         );
     }
 
@@ -101,6 +104,7 @@ class Josratarifas extends Module
 
         return parent::install()
             && $this->createTable()
+            && $this->installTab()
             && $this->registerOwnHooks()
             && $this->getUpdater()->registerHooks()
             && $this->saveSettings($this->getSettings());
@@ -111,6 +115,8 @@ class Josratarifas extends Module
         $this->getUpdater()->notifyUninstall();
 
         Db::getInstance()->execute('DROP TABLE IF EXISTS `' . _DB_PREFIX_ . self::TABLE . '`');
+        Db::getInstance()->execute('DROP TABLE IF EXISTS `' . _DB_PREFIX_ . self::TABLE_HISTORY . '`');
+        $this->uninstallTab();
         Configuration::deleteByName(self::CONF_SETTINGS);
         Configuration::deleteByName('JOSRATARIFAS_UPD_TS');
         Configuration::deleteByName('JOSRATARIFAS_UPD_INFO');
@@ -120,7 +126,27 @@ class Josratarifas extends Module
         return parent::uninstall();
     }
 
-    protected function createTable()
+    public function createTable()
+    {
+        return $this->createPriceTable() && Db::getInstance()->execute(
+            'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . self::TABLE_HISTORY . '` (
+                `id_historial` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+                `id_group` INT(10) UNSIGNED NOT NULL,
+                `id_product` INT(10) UNSIGNED NOT NULL,
+                `old_price` DECIMAL(20,6) NULL DEFAULT NULL,
+                `new_price` DECIMAL(20,6) NULL DEFAULT NULL,
+                `source` VARCHAR(16) NOT NULL DEFAULT \'\',
+                `id_employee` INT(10) UNSIGNED NOT NULL DEFAULT 0,
+                `date_add` DATETIME NOT NULL,
+                PRIMARY KEY (`id_historial`),
+                KEY `id_product` (`id_product`),
+                KEY `id_group` (`id_group`),
+                KEY `date_add` (`date_add`)
+            ) ENGINE=' . _MYSQL_ENGINE_ . ' DEFAULT CHARSET=utf8mb4'
+        );
+    }
+
+    protected function createPriceTable()
     {
         return Db::getInstance()->execute(
             'CREATE TABLE IF NOT EXISTS `' . _DB_PREFIX_ . self::TABLE . '` (
@@ -134,7 +160,43 @@ class Josratarifas extends Module
         );
     }
 
-    protected function registerOwnHooks()
+    /**
+     * Controlador oculto para el AJAX (rejilla, ficha del producto, exportar). No sale en el menú.
+     */
+    public function installTab()
+    {
+        if ((int) Tab::getIdFromClassName(self::AJAX_CONTROLLER)) {
+            return true;
+        }
+        $tab = new Tab();
+        $tab->class_name = self::AJAX_CONTROLLER;
+        $tab->module = $this->name;
+        $tab->active = 0;
+        $tab->id_parent = (int) Tab::getIdFromClassName('AdminParentModulesSf');
+        if (!$tab->id_parent) {
+            $tab->id_parent = -1;
+        }
+        $tab->name = array();
+        foreach (Language::getLanguages(false) as $lang) {
+            $tab->name[(int) $lang['id_lang']] = 'Tarifas por grupo (AJAX)';
+        }
+
+        return (bool) $tab->add();
+    }
+
+    protected function uninstallTab()
+    {
+        $idTab = (int) Tab::getIdFromClassName(self::AJAX_CONTROLLER);
+        if ($idTab) {
+            $tab = new Tab($idTab);
+
+            return (bool) $tab->delete();
+        }
+
+        return true;
+    }
+
+    public function registerOwnHooks()
     {
         $ok = true;
         foreach ($this->getOwnHooks() as $hook) {
@@ -153,6 +215,7 @@ class Josratarifas extends Module
     protected function selfRepair()
     {
         $this->createTable();
+        $this->installTab();
         $this->registerOwnHooks();
         if (Configuration::getGlobalValue(self::CONF_SETTINGS) === false) {
             $this->saveSettings($this->getSettings());
@@ -579,12 +642,6 @@ class Josratarifas extends Module
     {
         $this->selfRepair();
 
-        if (Tools::getValue('josratarifas_ajax')) {
-            $this->ajaxResponse();
-        }
-        if (Tools::getValue('josratarifas_export')) {
-            $this->exportCsv();
-        }
 
         $updater = $this->getUpdater();
         $output = $updater->processRequest();
@@ -705,6 +762,28 @@ class Josratarifas extends Module
         return $html;
     }
 
+    /** Categorías con sangría según su nivel, para el filtro */
+    protected function categoryOptions()
+    {
+        $rows = Db::getInstance()->executeS(
+            'SELECT c.`id_category`, c.`level_depth`, cl.`name`
+            FROM `' . _DB_PREFIX_ . 'category` c
+            LEFT JOIN `' . _DB_PREFIX_ . 'category_lang` cl ON (cl.`id_category` = c.`id_category`
+                AND cl.`id_lang` = ' . (int) Configuration::get('PS_LANG_DEFAULT') . ' AND cl.`id_shop` = ' . (int) $this->context->shop->id . ')
+            WHERE c.`id_parent` > 0
+            ORDER BY c.`nleft`'
+        );
+        $out = array();
+        foreach ((array) $rows as $r) {
+            $out[] = array(
+                'id' => (int) $r['id_category'],
+                'name' => str_repeat('— ', max(0, (int) $r['level_depth'] - 1)) . $r['name'],
+            );
+        }
+
+        return $out;
+    }
+
     protected function renderTabs($activeTab)
     {
         $settings = $this->getSettings();
@@ -734,15 +813,18 @@ class Josratarifas extends Module
                 'products' => isset($counts[$idGroup]) ? $counts[$idGroup] : 0,
                 'customers' => isset($customers[$idGroup]) ? $customers[$idGroup] : 0,
                 'tax_display' => (int) $groups[$idGroup]['price_display_method'] === 1 ? 'sin IVA' : 'con IVA',
+                'urls' => $this->groupUrls($idGroup),
             );
         }
 
         $this->context->smarty->assign(array(
             'jt_active' => $activeTab,
             'jt_tariffs' => $tariffs,
-            'jt_ajax_url' => $this->adminUrl() . '&josratarifas_ajax=1',
-            'jt_export_url' => $this->currentPageUrl() . '&josratarifas_export=1',
-            'jt_import_action' => $this->adminUrl(),
+            'jt_ajax_url' => $this->ajaxUrl(),
+            'jt_export_url' => $this->ajaxUrl() . '&jt_action=export_all',
+            'jt_import_action' => $this->currentPageUrl(),
+            'jt_categories' => $this->categoryOptions(),
+            'jt_manufacturers' => Manufacturer::getManufacturers(false, (int) Configuration::get('PS_LANG_DEFAULT'), false),
             'jt_tax_input' => (int) $settings['tax_input'],
             'jt_settings_form' => $this->renderSettingsForm(),
             'jt_js_url' => $this->_path . 'views/js/admin.js?v=' . $this->version,
@@ -872,7 +954,7 @@ class Josratarifas extends Module
         $helper->name_controller = $this->name;
         $helper->identifier = 'id_module';
         $helper->token = Tools::getAdminTokenLite('AdminModules');
-        $helper->currentIndex = $this->adminUrl(false);
+        $helper->currentIndex = $this->currentPageUrl();
         $helper->default_form_language = (int) Configuration::get('PS_LANG_DEFAULT');
         $helper->allow_employee_form_lang = (int) Configuration::get('PS_LANG_DEFAULT');
         $helper->show_toolbar = false;
@@ -942,8 +1024,82 @@ class Josratarifas extends Module
     }
 
     /* ------------------------------------------------------------------ */
-    /* AJAX de la rejilla                                                  */
+    /* Historial                                                           */
     /* ------------------------------------------------------------------ */
+
+    /**
+     * Guarda cambios en el historial. Cada fila: array(id_group, id_product, antes|null, después|null).
+     */
+    public function logHistory(array $changes, $source)
+    {
+        if (!$changes) {
+            return true;
+        }
+        $idEmployee = isset($this->context->employee) && Validate::isLoadedObject($this->context->employee) ? (int) $this->context->employee->id : 0;
+        $values = array();
+        foreach ($changes as $c) {
+            $values[] = '(' . (int) $c[0] . ', ' . (int) $c[1] . ', '
+                . ($c[2] === null ? 'NULL' : number_format((float) $c[2], 6, '.', '')) . ', '
+                . ($c[3] === null ? 'NULL' : number_format((float) $c[3], 6, '.', '')) . ', \''
+                . pSQL($source) . '\', ' . $idEmployee . ', NOW())';
+        }
+        $ok = true;
+        foreach (array_chunk($values, 500) as $chunk) {
+            $ok = Db::getInstance()->execute(
+                'INSERT INTO `' . _DB_PREFIX_ . self::TABLE_HISTORY . '`
+                (`id_group`, `id_product`, `old_price`, `new_price`, `source`, `id_employee`, `date_add`) VALUES ' . implode(',', $chunk)
+            ) && $ok;
+        }
+
+        return $ok;
+    }
+
+    /** Historial de más de 2 años: fuera */
+    protected function purgeHistory()
+    {
+        Db::getInstance()->execute(
+            'DELETE FROM `' . _DB_PREFIX_ . self::TABLE_HISTORY . '` WHERE `date_add` < DATE_SUB(NOW(), INTERVAL 2 YEAR)'
+        );
+    }
+
+    /**
+     * Pone o quita (null) el precio de tarifa de un producto y lo apunta en el historial.
+     *
+     * @return true|string
+     */
+    public function setPrice($idGroup, $idProduct, $priceTaxExcl, $source)
+    {
+        $old = $this->getTariffPrice($idGroup, $idProduct);
+        if ($priceTaxExcl === null) {
+            if ($old === null) {
+                return true;
+            }
+            if (!$this->deletePrice($idGroup, $idProduct)) {
+                return 'No se pudo borrar el precio en la base de datos: ' . Db::getInstance()->getMsgError();
+            }
+        } else {
+            $priceTaxExcl = round((float) $priceTaxExcl, 6);
+            if ($old !== null && abs($old - $priceTaxExcl) < 0.0000005) {
+                return true;
+            }
+            if (!$this->savePrice($idGroup, $idProduct, $priceTaxExcl)) {
+                return 'No se pudo guardar el precio en la base de datos: ' . Db::getInstance()->getMsgError();
+            }
+        }
+        $this->logHistory(array(array($idGroup, $idProduct, $old, $priceTaxExcl)), $source);
+
+        return true;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* AJAX (controlador oculto AdminJosratarifasAjax)                     */
+    /* ------------------------------------------------------------------ */
+
+    /** URL del controlador oculto de AJAX, con su token */
+    public function ajaxUrl()
+    {
+        return $this->context->link->getAdminLink(self::AJAX_CONTROLLER);
+    }
 
     protected function jsonExit(array $data)
     {
@@ -961,31 +1117,144 @@ class Josratarifas extends Module
         exit;
     }
 
-    protected function ajaxResponse()
+    /** Punto de entrada del controlador AJAX. Siempre termina con exit. */
+    public function ajaxResponse()
     {
         $action = (string) Tools::getValue('jt_action');
-        $idGroup = (int) Tools::getValue('id_group');
-        if (!$this->isTariffGroup($idGroup)) {
-            $this->jsonExit(array('ok' => false, 'error' => 'Ese grupo no está marcado como tarifa (o es el grupo del PVP). Revisa los ajustes y recarga la página.'));
-        }
-
-        if ($action === 'list') {
-            $this->jsonExit($this->ajaxList($idGroup));
-        }
-        if ($action === 'save') {
-            if (!isset($_SERVER['REQUEST_METHOD']) || $_SERVER['REQUEST_METHOD'] !== 'POST') {
-                $this->jsonExit(array('ok' => false, 'error' => 'Los cambios de precio se envían por POST.'));
+        try {
+            switch ($action) {
+                case 'export_all':
+                    $this->exportCsv(null, array());
+                    // no break (exportCsv termina)
+                case 'history':
+                    $this->jsonExit($this->ajaxHistory());
+                    // no break
+                case 'product':
+                    $this->jsonExit($this->ajaxProduct((int) Tools::getValue('id_product')));
+                    // no break
+                case 'saveproduct':
+                    $this->requirePost();
+                    $this->jsonExit($this->ajaxSaveProduct((int) Tools::getValue('id_product')));
+                    // no break
             }
-            $this->jsonExit($this->ajaxSave($idGroup));
+
+            $idGroup = (int) Tools::getValue('id_group');
+            if (!$this->isTariffGroup($idGroup)) {
+                $this->jsonExit(array('ok' => false, 'error' => 'Ese grupo no está marcado como tarifa (o es el grupo del PVP). Revisa los ajustes y recarga la página.'));
+            }
+            switch ($action) {
+                case 'list':
+                    $this->jsonExit($this->ajaxList($idGroup));
+                    // no break
+                case 'save':
+                    $this->requirePost();
+                    $this->jsonExit($this->ajaxSave($idGroup));
+                    // no break
+                case 'bulk':
+                    $this->requirePost();
+                    $this->jsonExit($this->ajaxBulk($idGroup));
+                    // no break
+                case 'export':
+                    $this->exportCsv($idGroup, $this->readFilters());
+                    // no break
+            }
+        } catch (Exception $e) {
+            $this->jsonExit(array('ok' => false, 'error' => 'Error del servidor: ' . $e->getMessage()));
         }
 
-        $this->jsonExit(array('ok' => false, 'error' => 'Acción desconocida: ' . $action . '.'));
+        $this->jsonExit(array('ok' => false, 'error' => 'Acción desconocida: «' . $action . '».'));
+    }
+
+    protected function requirePost()
+    {
+        if (!isset($_SERVER['REQUEST_METHOD']) || $_SERVER['REQUEST_METHOD'] !== 'POST') {
+            $this->jsonExit(array('ok' => false, 'error' => 'Los cambios se envían por POST.'));
+        }
+    }
+
+    /** Nombre de cada regla de impuestos */
+    protected function taxRulesNames()
+    {
+        static $names = null;
+        if ($names === null) {
+            $names = array();
+            foreach ((array) Db::getInstance()->executeS(
+                'SELECT `id_tax_rules_group`, `name` FROM `' . _DB_PREFIX_ . 'tax_rules_group`'
+            ) as $r) {
+                $names[(int) $r['id_tax_rules_group']] = $r['name'];
+            }
+        }
+
+        return $names;
+    }
+
+    protected function productEditUrl($idProduct)
+    {
+        try {
+            return $this->context->link->getAdminLink(
+                'AdminProducts',
+                true,
+                array('id_product' => (int) $idProduct, 'updateproduct' => '1'),
+                array('id_product' => (int) $idProduct, 'updateproduct' => '1')
+            );
+        } catch (Exception $e) {
+            return '';
+        } catch (Throwable $e) {
+            return '';
+        }
+    }
+
+    protected function productFrontUrl($idProduct)
+    {
+        try {
+            return $this->context->link->getProductLink((int) $idProduct);
+        } catch (Exception $e) {
+            return '';
+        } catch (Throwable $e) {
+            return '';
+        }
+    }
+
+    /**
+     * Enlaces a un grupo: ver (con sus clientes) y editar. Funciona con la página antigua
+     * de Grupos y con la nueva de PS 9 (si está activada).
+     */
+    public function groupUrls($idGroup)
+    {
+        $urls = array('view' => '', 'edit' => '');
+        foreach (array('view' => 'viewgroup', 'edit' => 'updategroup') as $key => $action) {
+            try {
+                $urls[$key] = $this->context->link->getAdminLink('AdminGroups', true, array(), array('id_group' => (int) $idGroup, $action => '1'));
+            } catch (Exception $e) {
+                $urls[$key] = '';
+            } catch (Throwable $e) {
+                $urls[$key] = '';
+            }
+            if ($urls[$key] === '') {
+                // Página nueva de Grupos (PS 9): se genera la ruta directamente
+                try {
+                    $router = \PrestaShop\PrestaShop\Adapter\SymfonyContainer::getInstance()->get('router');
+                    $urls[$key] = $key === 'edit'
+                        ? $router->generate('admin_customer_groups_edit', array('groupId' => (int) $idGroup))
+                        : $router->generate('admin_customer_groups_index');
+                } catch (Exception $e) {
+                    $urls[$key] = '';
+                } catch (Throwable $e) {
+                    $urls[$key] = '';
+                }
+            }
+        }
+
+        return $urls;
     }
 
     protected function productRow(array $r)
     {
         $rate = $this->taxRate($r['id_tax_rules_group']);
         $tariff = $r['tariff'] === null ? null : (float) $r['tariff'];
+        $pvp = (float) $r['price'];
+        $names = $this->taxRulesNames();
+        $idTax = (int) $r['id_tax_rules_group'];
 
         return array(
             'id' => (int) $r['id_product'],
@@ -993,10 +1262,14 @@ class Josratarifas extends Module
             'name' => (string) $r['name'],
             'active' => (int) $r['active'],
             'rate' => $rate,
-            'pvp' => round((float) $r['price'], 6),
-            'pvp_ti' => round((float) $r['price'] * (1 + $rate / 100), 2),
+            'tax_name' => $idTax ? (isset($names[$idTax]) ? $names[$idTax] : 'Regla ' . $idTax) : 'Sin IVA',
+            'pvp' => round($pvp, 6),
+            'pvp_ti' => round($pvp * (1 + $rate / 100), 2),
             'tariff' => $tariff === null ? null : round($tariff, 6),
             'tariff_ti' => $tariff === null ? null : round($tariff * (1 + $rate / 100), 2),
+            'warn' => $tariff !== null && ($tariff <= 0 || $tariff > $pvp) ? ($tariff <= 0 ? 'La tarifa vale 0' : 'La tarifa es mayor que el PVP') : '',
+            'url_front' => $this->productFrontUrl($r['id_product']),
+            'url_edit' => $this->productEditUrl($r['id_product']),
         );
     }
 
@@ -1010,38 +1283,96 @@ class Josratarifas extends Module
             LEFT JOIN `' . _DB_PREFIX_ . 'product_lang` pl ON (pl.`id_product` = p.`id_product` AND pl.`id_lang` = ' . $idLang . ' AND pl.`id_shop` = ' . $idShop . ')';
     }
 
-    protected function ajaxList($idGroup)
+    /** Filtros de la rejilla (también para exportar lo filtrado y rellenar en bloque) */
+    protected function readFilters()
     {
-        $q = trim((string) Tools::getValue('q'));
-        $filter = (string) Tools::getValue('filter');
-        $page = max(1, (int) Tools::getValue('page'));
+        return array(
+            'q' => trim((string) Tools::getValue('q')),
+            'filter' => (string) Tools::getValue('filter'),
+            'id_category' => (int) Tools::getValue('id_category'),
+            'id_manufacturer' => (int) Tools::getValue('id_manufacturer'),
+            'sort' => (string) Tools::getValue('sort'),
+            'dir' => Tools::strtolower((string) Tools::getValue('dir')) === 'asc' ? 'ASC' : 'DESC',
+        );
+    }
 
+    /** FROM + WHERE de los productos de una tarifa con los filtros aplicados */
+    protected function filteredFrom($idGroup, array $f)
+    {
         $from = $this->productSelect() . '
-            LEFT JOIN `' . _DB_PREFIX_ . self::TABLE . '` t ON (t.`id_product` = p.`id_product` AND t.`id_group` = ' . (int) $idGroup . ')';
+            LEFT JOIN `' . _DB_PREFIX_ . self::TABLE . '` t ON (t.`id_product` = p.`id_product` AND t.`id_group` = ' . (int) $idGroup . ')
+            LEFT JOIN `' . _DB_PREFIX_ . 'tax_rules_group` trg ON (trg.`id_tax_rules_group` = ps.`id_tax_rules_group`)';
         $where = array('1');
-        if ($q !== '') {
-            $like = '\'%' . pSQL(str_replace(array('%', '_'), array('\%', '\_'), $q)) . '%\'';
+        if (!empty($f['q'])) {
+            $like = '\'%' . pSQL(str_replace(array('%', '_'), array('\%', '\_'), $f['q'])) . '%\'';
             $cond = 'p.`reference` LIKE ' . $like . ' OR pl.`name` LIKE ' . $like;
-            if (ctype_digit($q)) {
-                $cond .= ' OR p.`id_product` = ' . (int) $q;
+            if (ctype_digit($f['q'])) {
+                $cond .= ' OR p.`id_product` = ' . (int) $f['q'];
             }
             $where[] = '(' . $cond . ')';
         }
-        if ($filter === 'with') {
+        if ($f['filter'] === 'with') {
             $where[] = 't.`id_product` IS NOT NULL';
-        } elseif ($filter === 'without') {
+        } elseif ($f['filter'] === 'without') {
             $where[] = 't.`id_product` IS NULL';
+        } elseif ($f['filter'] === 'warn') {
+            $where[] = '(t.`id_product` IS NOT NULL AND (t.`price` <= 0 OR t.`price` > ps.`price`))';
         }
-        $whereSql = ' WHERE ' . implode(' AND ', $where);
+        if (!empty($f['id_manufacturer'])) {
+            $where[] = 'p.`id_manufacturer` = ' . (int) $f['id_manufacturer'];
+        }
+        if (!empty($f['id_category'])) {
+            $cat = Db::getInstance()->getRow(
+                'SELECT `nleft`, `nright` FROM `' . _DB_PREFIX_ . 'category` WHERE `id_category` = ' . (int) $f['id_category']
+            );
+            if ($cat) {
+                // La categoría y sus subcategorías
+                $where[] = 'EXISTS (SELECT 1 FROM `' . _DB_PREFIX_ . 'category_product` cp
+                    INNER JOIN `' . _DB_PREFIX_ . 'category` c ON (c.`id_category` = cp.`id_category`)
+                    WHERE cp.`id_product` = p.`id_product` AND c.`nleft` >= ' . (int) $cat['nleft'] . ' AND c.`nright` <= ' . (int) $cat['nright'] . ')';
+            }
+        }
 
-        $total = (int) Db::getInstance()->getValue('SELECT COUNT(*) ' . $from . $whereSql);
+        return $from . ' WHERE ' . implode(' AND ', $where);
+    }
+
+    protected function orderBy(array $f)
+    {
+        $columns = array(
+            'id' => 'p.`id_product`',
+            'ref' => 'p.`reference`',
+            'name' => 'pl.`name`',
+            'tax' => 'trg.`name`',
+            'pvp' => 'ps.`price`',
+            'tariff' => 't.`price`',
+            'diff' => '(t.`price` - ps.`price`) / NULLIF(ps.`price`, 0)',
+        );
+        $col = isset($columns[$f['sort']]) ? $columns[$f['sort']] : $columns['id'];
+
+        return ' ORDER BY ' . $col . ' ' . $f['dir'] . ', p.`id_product` DESC';
+    }
+
+    protected function rowSelect()
+    {
+        return 'SELECT p.`id_product`, p.`reference`, pl.`name`, ps.`price`, ps.`active`, ps.`id_tax_rules_group`, t.`price` AS tariff ';
+    }
+
+    protected function ajaxList($idGroup)
+    {
+        $f = $this->readFilters();
+        $page = max(1, (int) Tools::getValue('page'));
+        $from = $this->filteredFrom($idGroup, $f);
+
+        $total = (int) Db::getInstance()->getValue('SELECT COUNT(*) ' . $from);
         $pages = max(1, (int) ceil($total / self::PAGE_SIZE));
         $page = min($page, $pages);
+        $warnings = (int) Db::getInstance()->getValue(
+            'SELECT COUNT(*) ' . $this->filteredFrom($idGroup, array_merge($f, array('filter' => 'warn')))
+        );
 
         $rows = Db::getInstance()->executeS(
-            'SELECT p.`id_product`, p.`reference`, pl.`name`, ps.`price`, ps.`active`, ps.`id_tax_rules_group`, t.`price` AS tariff '
-            . $from . $whereSql
-            . ' ORDER BY p.`id_product` DESC LIMIT ' . (($page - 1) * self::PAGE_SIZE) . ', ' . self::PAGE_SIZE
+            $this->rowSelect() . $from . $this->orderBy($f)
+            . ' LIMIT ' . (($page - 1) * self::PAGE_SIZE) . ', ' . self::PAGE_SIZE
         );
 
         $out = array();
@@ -1049,45 +1380,367 @@ class Josratarifas extends Module
             $out[] = $this->productRow($r);
         }
 
-        return array('ok' => true, 'rows' => $out, 'total' => $total, 'page' => $page, 'pages' => $pages);
+        return array('ok' => true, 'rows' => $out, 'total' => $total, 'page' => $page, 'pages' => $pages, 'warnings' => $warnings);
+    }
+
+    protected function productRowById($idGroup, $idProduct)
+    {
+        return Db::getInstance()->getRow(
+            'SELECT p.`id_product`, p.`reference`, pl.`name`, ps.`price`, ps.`active`, ps.`id_tax_rules_group`, t.`price` AS tariff '
+            . $this->productSelect() . '
+            LEFT JOIN `' . _DB_PREFIX_ . self::TABLE . '` t ON (t.`id_product` = p.`id_product` AND t.`id_group` = ' . (int) $idGroup . ')
+            WHERE p.`id_product` = ' . (int) $idProduct
+        );
+    }
+
+    /**
+     * Precio escrito por el empleado → sin IVA, según el ajuste. null = quitar.
+     *
+     * @return array(float|null, string error)
+     */
+    protected function inputToTaxExcl($raw, $idTaxRulesGroup)
+    {
+        if (trim((string) $raw) === '') {
+            return array(null, '');
+        }
+        $value = $this->parseNumber($raw);
+        if ($value === null) {
+            return array(null, '«' . $raw . '» no es un precio válido. Escribe un número, por ejemplo 19,50 (vacío para quitar la tarifa).');
+        }
+        $settings = $this->getSettings();
+        $rate = $this->taxRate($idTaxRulesGroup);
+
+        return array(!empty($settings['tax_input']) ? $value / (1 + $rate / 100) : $value, '');
     }
 
     protected function ajaxSave($idGroup)
     {
         $idProduct = (int) Tools::getValue('id_product');
         $raw = (string) Tools::getValue('value');
-        $settings = $this->getSettings();
-
-        $row = Db::getInstance()->getRow(
-            'SELECT p.`id_product`, p.`reference`, pl.`name`, ps.`price`, ps.`active`, ps.`id_tax_rules_group`, NULL AS tariff '
-            . $this->productSelect() . ' WHERE p.`id_product` = ' . $idProduct
-        );
+        $row = $this->productRowById($idGroup, $idProduct);
         if (!$row) {
             return array('ok' => false, 'error' => 'El producto ' . $idProduct . ' ya no existe en la tienda.');
         }
+        list($taxExcl, $error) = $this->inputToTaxExcl($raw, $row['id_tax_rules_group']);
+        if ($error !== '') {
+            return array('ok' => false, 'error' => $error);
+        }
+        $result = $this->setPrice($idGroup, $idProduct, $taxExcl, 'rejilla');
+        if ($result !== true) {
+            return array('ok' => false, 'error' => $result);
+        }
+        $row['tariff'] = $taxExcl === null ? null : round($taxExcl, 6);
 
-        if (trim($raw) === '') {
-            if (!$this->deletePrice($idGroup, $idProduct)) {
-                return array('ok' => false, 'error' => 'No se pudo borrar el precio en la base de datos: ' . Db::getInstance()->getMsgError());
+        return array(
+            'ok' => true,
+            'row' => $this->productRow($row),
+            'message' => $taxExcl === null ? 'Tarifa quitada: se vende a su precio normal.' : 'Guardado.',
+        );
+    }
+
+    /** Redondeo del rellenado en bloque, sobre el precio tal como se escribe (con o sin IVA) */
+    protected function roundValue($v, $mode)
+    {
+        switch ($mode) {
+            case '005':
+                $v = round($v / 0.05) * 0.05;
+                break;
+            case '010':
+                $v = round($v / 0.10) * 0.10;
+                break;
+            case '1':
+                $v = round($v);
+                break;
+            case '095':
+                $v = round($v - 0.95) + 0.95;
+                break;
+            case '099':
+                $v = round($v - 0.99) + 0.99;
+                break;
+            default:
+                $v = round($v, 2);
+        }
+
+        return max(0, round($v, 2));
+    }
+
+    /**
+     * Rellenar en bloque los productos del filtro: tarifa = (PVP u otra tarifa) ± X %,
+     * con redondeo. Con dry=1 solo cuenta y enseña ejemplos.
+     */
+    protected function ajaxBulk($idGroup)
+    {
+        $f = $this->readFilters();
+        $settings = $this->getSettings();
+        $base = (string) Tools::getValue('base');
+        $onlyEmpty = (bool) Tools::getValue('only_empty');
+        $percent = $this->parseSigned(Tools::getValue('percent'));
+        $rounding = (string) Tools::getValue('rounding');
+        $dry = (bool) Tools::getValue('dry');
+
+        if ($percent === null) {
+            return array('ok' => false, 'error' => 'El porcentaje no es un número. Escribe por ejemplo -10 para un 10 % menos o 5 para un 5 % más.');
+        }
+        if ($percent <= -100) {
+            return array('ok' => false, 'error' => 'Un ' . $percent . ' % dejaría los precios a 0 o en negativo.');
+        }
+        $sourceGroup = 0;
+        if ($base !== 'pvp') {
+            $sourceGroup = (int) $base;
+            if (!$this->isTariffGroup($sourceGroup)) {
+                return array('ok' => false, 'error' => 'La tarifa de origen no está marcada como tarifa.');
             }
-            $row['tariff'] = null;
-
-            return array('ok' => true, 'row' => $this->productRow($row), 'message' => 'Precio de tarifa quitado: se vende a su precio normal.');
         }
 
-        $value = $this->parseNumber($raw);
-        if ($value === null) {
-            return array('ok' => false, 'error' => '«' . $raw . '» no es un precio válido. Escribe un número, por ejemplo 19,50 (vacío para quitar la tarifa).');
+        @set_time_limit(0);
+        $from = $this->filteredFrom($idGroup, $f);
+        $select = $this->rowSelect();
+        if ($sourceGroup) {
+            // filteredFrom termina en WHERE: el JOIN de la tarifa de origen va antes
+            $pos = strpos($from, ' WHERE ');
+            $from = substr($from, 0, $pos)
+                . ' LEFT JOIN `' . _DB_PREFIX_ . self::TABLE . '` src ON (src.`id_product` = p.`id_product` AND src.`id_group` = ' . $sourceGroup . ')'
+                . substr($from, $pos);
+            $select .= ', src.`price` AS source_price ';
         }
-        $rate = $this->taxRate($row['id_tax_rules_group']);
-        $taxExcl = !empty($settings['tax_input']) ? $value / (1 + $rate / 100) : $value;
+        $rows = Db::getInstance()->executeS($select . $from);
 
-        if (!$this->savePrice($idGroup, $idProduct, $taxExcl)) {
-            return array('ok' => false, 'error' => 'No se pudo guardar el precio en la base de datos: ' . Db::getInstance()->getMsgError());
+        $withTax = !empty($settings['tax_input']);
+        $stats = array('change' => 0, 'same' => 0, 'has_price' => 0, 'no_source' => 0);
+        $sample = array();
+        $changes = array();
+        foreach ((array) $rows as $r) {
+            $current = $r['tariff'] === null ? null : (float) $r['tariff'];
+            if ($onlyEmpty && $current !== null) {
+                ++$stats['has_price'];
+                continue;
+            }
+            if ($sourceGroup) {
+                if ($r['source_price'] === null) {
+                    ++$stats['no_source'];
+                    continue;
+                }
+                $baseValue = (float) $r['source_price'];
+            } else {
+                $baseValue = (float) $r['price'];
+            }
+            $rate = $this->taxRate($r['id_tax_rules_group']);
+            $factor = $withTax ? 1 + $rate / 100 : 1;
+            $shown = $this->roundValue($baseValue * (1 + $percent / 100) * $factor, $rounding);
+            $new = round($shown / $factor, 6);
+            if ($current !== null && abs($current - $new) < 0.0000005) {
+                ++$stats['same'];
+                continue;
+            }
+            ++$stats['change'];
+            $changes[] = array($idGroup, (int) $r['id_product'], $current, $new);
+            if (count($sample) < 10) {
+                $sample[] = array(
+                    'ref' => $r['reference'],
+                    'name' => $r['name'],
+                    'before' => $current === null ? null : round($current * $factor, $withTax ? 2 : 6),
+                    'after' => round($new * $factor, $withTax ? 2 : 6),
+                );
+            }
         }
-        $row['tariff'] = round($taxExcl, 6);
 
-        return array('ok' => true, 'row' => $this->productRow($row), 'message' => 'Guardado.');
+        if (!$dry && $changes) {
+            $values = array();
+            foreach ($changes as $c) {
+                $values[] = '(' . (int) $c[0] . ', ' . (int) $c[1] . ', ' . number_format($c[3], 6, '.', '') . ', NOW())';
+            }
+            foreach (array_chunk($values, 500) as $chunk) {
+                if (!Db::getInstance()->execute(
+                    'INSERT INTO `' . _DB_PREFIX_ . self::TABLE . '` (`id_group`, `id_product`, `price`, `date_upd`) VALUES '
+                    . implode(',', $chunk)
+                    . ' ON DUPLICATE KEY UPDATE `price` = VALUES(`price`), `date_upd` = VALUES(`date_upd`)'
+                )) {
+                    return array('ok' => false, 'error' => 'Se ha parado a medias al guardar en la base de datos: ' . Db::getInstance()->getMsgError());
+                }
+            }
+            self::$priceCache = array();
+            $this->logHistory($changes, 'bloque');
+        }
+
+        return array('ok' => true, 'dry' => $dry, 'stats' => $stats, 'sample' => $sample, 'tax_input' => $withTax ? 1 : 0);
+    }
+
+    /** "-10", "+5", "7,5" → float; null si no es un número */
+    protected function parseSigned($value)
+    {
+        $value = str_replace(array(' ', '%'), '', trim((string) $value));
+        if ($value === '') {
+            return 0.0;
+        }
+        $sign = 1;
+        if ($value[0] === '-' || $value[0] === '+') {
+            $sign = $value[0] === '-' ? -1 : 1;
+            $value = substr($value, 1);
+        }
+        $n = $this->parseNumber($value);
+
+        return $n === null ? null : $sign * $n;
+    }
+
+    protected function ajaxHistory()
+    {
+        $groups = $this->getAllGroups();
+        $idGroup = (int) Tools::getValue('id_group');
+        $q = trim((string) Tools::getValue('q'));
+        $source = (string) Tools::getValue('source');
+        $page = max(1, (int) Tools::getValue('page'));
+        $settings = $this->getSettings();
+        $withTax = !empty($settings['tax_input']);
+
+        $from = 'FROM `' . _DB_PREFIX_ . self::TABLE_HISTORY . '` h
+            LEFT JOIN `' . _DB_PREFIX_ . 'product` p ON (p.`id_product` = h.`id_product`)
+            LEFT JOIN `' . _DB_PREFIX_ . 'product_shop` ps ON (ps.`id_product` = h.`id_product` AND ps.`id_shop` = ' . (int) $this->context->shop->id . ')
+            LEFT JOIN `' . _DB_PREFIX_ . 'product_lang` pl ON (pl.`id_product` = h.`id_product` AND pl.`id_lang` = ' . (int) Configuration::get('PS_LANG_DEFAULT') . ' AND pl.`id_shop` = ' . (int) $this->context->shop->id . ')
+            LEFT JOIN `' . _DB_PREFIX_ . 'employee` e ON (e.`id_employee` = h.`id_employee`)';
+        $where = array('1');
+        if ($idGroup) {
+            $where[] = 'h.`id_group` = ' . $idGroup;
+        }
+        if (in_array($source, array('rejilla', 'ficha', 'csv', 'bloque'), true)) {
+            $where[] = 'h.`source` = \'' . pSQL($source) . '\'';
+        }
+        if ($q !== '') {
+            $like = '\'%' . pSQL(str_replace(array('%', '_'), array('\%', '\_'), $q)) . '%\'';
+            $cond = 'p.`reference` LIKE ' . $like . ' OR pl.`name` LIKE ' . $like;
+            if (ctype_digit($q)) {
+                $cond .= ' OR h.`id_product` = ' . (int) $q;
+            }
+            $where[] = '(' . $cond . ')';
+        }
+        $whereSql = ' WHERE ' . implode(' AND ', $where);
+
+        $total = (int) Db::getInstance()->getValue('SELECT COUNT(*) ' . $from . $whereSql);
+        $pages = max(1, (int) ceil($total / self::PAGE_SIZE));
+        $page = min($page, $pages);
+        $rows = Db::getInstance()->executeS(
+            'SELECT h.*, p.`reference`, pl.`name`, ps.`id_tax_rules_group`, e.`firstname`, e.`lastname` '
+            . $from . $whereSql . ' ORDER BY h.`id_historial` DESC LIMIT ' . (($page - 1) * self::PAGE_SIZE) . ', ' . self::PAGE_SIZE
+        );
+
+        $labels = array('rejilla' => 'Rejilla', 'ficha' => 'Ficha del producto', 'csv' => 'Importación CSV', 'bloque' => 'Rellenar en bloque');
+        $out = array();
+        foreach ((array) $rows as $r) {
+            $factor = $withTax ? 1 + $this->taxRate($r['id_tax_rules_group']) / 100 : 1;
+            $date = DateTime::createFromFormat('Y-m-d H:i:s', $r['date_add']);
+            $out[] = array(
+                'date' => $date ? $date->format('d/m/Y H:i') : $r['date_add'],
+                'employee' => trim($r['firstname'] . ' ' . $r['lastname']) !== '' ? trim($r['firstname'] . ' ' . $r['lastname']) : '—',
+                'tariff' => isset($groups[(int) $r['id_group']]) ? $groups[(int) $r['id_group']]['name'] : 'Grupo ' . (int) $r['id_group'] . ' (borrado)',
+                'id_product' => (int) $r['id_product'],
+                'ref' => (string) $r['reference'],
+                'name' => $r['name'] !== null ? (string) $r['name'] : 'Producto borrado',
+                'old' => $r['old_price'] === null ? null : round((float) $r['old_price'] * $factor, $withTax ? 2 : 6),
+                'new' => $r['new_price'] === null ? null : round((float) $r['new_price'] * $factor, $withTax ? 2 : 6),
+                'source' => isset($labels[$r['source']]) ? $labels[$r['source']] : $r['source'],
+            );
+        }
+
+        return array('ok' => true, 'rows' => $out, 'total' => $total, 'page' => $page, 'pages' => $pages, 'tax_input' => $withTax ? 1 : 0);
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Ficha del producto en el back-office                                */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Pestaña Módulos de la ficha del producto (página de 8.2 y la nueva de 8.2/9):
+     * sus precios en cada tarifa, editables ahí mismo. Los campos no llevan name,
+     * para que no viajen con el formulario del producto, y se guardan por AJAX.
+     */
+    public function hookDisplayAdminProductsExtra($params)
+    {
+        $idProduct = isset($params['id_product']) ? (int) $params['id_product'] : (int) Tools::getValue('id_product');
+        $settings = $this->getSettings();
+        $this->context->smarty->assign(array(
+            'jt_id_product' => $idProduct,
+            'jt_has_tariffs' => (bool) $this->getTariffGroups(),
+            'jt_ajax_url' => $this->ajaxUrl(),
+            'jt_config_url' => $this->context->link->getAdminLink('AdminModules', true, array(), array('configure' => $this->name)),
+            'jt_tax_input' => (int) $settings['tax_input'],
+            'jt_js_url' => $this->_path . 'views/js/product.js?v=' . $this->version,
+        ));
+
+        return $this->display(__FILE__, 'views/templates/admin/product.tpl');
+    }
+
+    protected function ajaxProduct($idProduct)
+    {
+        $settings = $this->getSettings();
+        $product = Db::getInstance()->getRow(
+            'SELECT p.`id_product`, p.`reference`, pl.`name`, ps.`price`, ps.`id_tax_rules_group` '
+            . $this->productSelect() . ' WHERE p.`id_product` = ' . (int) $idProduct
+        );
+        if (!$product) {
+            return array('ok' => false, 'error' => 'Guarda primero el producto: todavía no existe en la base de datos.');
+        }
+        $rate = $this->taxRate($product['id_tax_rules_group']);
+        $names = $this->taxRulesNames();
+        $groups = $this->getAllGroups();
+        $rows = array();
+        foreach ($this->getTariffGroups() as $idGroup) {
+            if (!isset($groups[$idGroup])) {
+                continue;
+            }
+            $price = $this->getTariffPrice($idGroup, $idProduct);
+            $rows[] = array(
+                'id_group' => $idGroup,
+                'name' => $groups[$idGroup]['name'],
+                'tariff' => $price === null ? null : round($price, 6),
+                'tariff_ti' => $price === null ? null : round($price * (1 + $rate / 100), 2),
+                'warn' => $price !== null && ($price <= 0 || $price > (float) $product['price']) ? ($price <= 0 ? 'La tarifa vale 0' : 'Mayor que el PVP') : '',
+            );
+        }
+        $idTax = (int) $product['id_tax_rules_group'];
+
+        return array(
+            'ok' => true,
+            'tax_input' => (int) $settings['tax_input'],
+            'pvp' => round((float) $product['price'], 6),
+            'pvp_ti' => round((float) $product['price'] * (1 + $rate / 100), 2),
+            'tax_name' => $idTax ? (isset($names[$idTax]) ? $names[$idTax] : 'Regla ' . $idTax) : 'Sin IVA',
+            'rate' => $rate,
+            'rows' => $rows,
+        );
+    }
+
+    protected function ajaxSaveProduct($idProduct)
+    {
+        $product = Db::getInstance()->getRow(
+            'SELECT p.`id_product`, ps.`id_tax_rules_group` ' . $this->productSelect() . ' WHERE p.`id_product` = ' . (int) $idProduct
+        );
+        if (!$product) {
+            return array('ok' => false, 'error' => 'Guarda primero el producto: todavía no existe en la base de datos.');
+        }
+        $errors = array();
+        $saved = 0;
+        $groups = $this->getAllGroups();
+        foreach ($this->getTariffGroups() as $idGroup) {
+            $key = 'price_' . $idGroup;
+            if (!isset($_POST[$key])) {
+                continue;
+            }
+            list($taxExcl, $error) = $this->inputToTaxExcl(Tools::getValue($key), $product['id_tax_rules_group']);
+            if ($error !== '') {
+                $errors[] = (isset($groups[$idGroup]) ? $groups[$idGroup]['name'] : $idGroup) . ': ' . $error;
+                continue;
+            }
+            $result = $this->setPrice($idGroup, $idProduct, $taxExcl, 'ficha');
+            if ($result !== true) {
+                $errors[] = (isset($groups[$idGroup]) ? $groups[$idGroup]['name'] : $idGroup) . ': ' . $result;
+                continue;
+            }
+            ++$saved;
+        }
+        $data = $this->ajaxProduct($idProduct);
+        $data['errors'] = $errors;
+        $data['saved'] = $saved;
+
+        return $data;
     }
 
     /* ------------------------------------------------------------------ */
@@ -1108,13 +1761,17 @@ class Josratarifas extends Module
         return $s;
     }
 
-    protected function exportCsv()
+    /**
+     * Exporta a CSV. Sin $onlyGroup: todos los productos y todas las tarifas.
+     * Con $onlyGroup: los productos del filtro y solo esa tarifa.
+     */
+    protected function exportCsv($onlyGroup, array $filters)
     {
         $settings = $this->getSettings();
         $groups = $this->getAllGroups();
         $tariffs = array();
         foreach ($this->getTariffGroups() as $idGroup) {
-            if (isset($groups[$idGroup])) {
+            if (isset($groups[$idGroup]) && (!$onlyGroup || $idGroup === (int) $onlyGroup)) {
                 $tariffs[$idGroup] = $groups[$idGroup]['name'];
             }
         }
@@ -1130,16 +1787,25 @@ class Josratarifas extends Module
             }
         }
 
-        $rows = Db::getInstance()->executeS(
-            'SELECT p.`id_product`, p.`reference`, pl.`name`, ps.`price`, ps.`id_tax_rules_group` '
-            . $this->productSelect() . ' ORDER BY p.`reference`, p.`id_product`'
-        );
+        if ($onlyGroup) {
+            $rows = Db::getInstance()->executeS(
+                'SELECT p.`id_product`, p.`reference`, pl.`name`, ps.`price`, ps.`id_tax_rules_group` '
+                . $this->filteredFrom($onlyGroup, $filters) . $this->orderBy($filters)
+            );
+            $file = 'tarifa_' . Tools::str2url($tariffs ? reset($tariffs) : 'tarifa') . '_' . date('Ymd_Hi') . '.csv';
+        } else {
+            $rows = Db::getInstance()->executeS(
+                'SELECT p.`id_product`, p.`reference`, pl.`name`, ps.`price`, ps.`id_tax_rules_group` '
+                . $this->productSelect() . ' ORDER BY p.`reference`, p.`id_product`'
+            );
+            $file = 'tarifas_' . date('Ymd_Hi') . '.csv';
+        }
 
         while (ob_get_level() > 0) {
             ob_end_clean();
         }
         header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: attachment; filename="tarifas_' . date('Ymd_Hi') . '.csv"');
+        header('Content-Disposition: attachment; filename="' . $file . '"');
         $out = fopen('php://output', 'w');
         fwrite($out, "\xEF\xBB\xBF");
         fputcsv($out, array_merge(array('referencia', 'nombre', $withTax ? 'pvp (con IVA)' : 'pvp (sin IVA)'), array_values($tariffs)), ';');
@@ -1272,6 +1938,7 @@ class Josratarifas extends Module
         }
 
         $stats = array('rows' => 0, 'new' => 0, 'changed' => 0, 'same' => 0, 'deleted' => 0);
+        $history = array();
         $inserts = array();
         $deletes = array();
         $line = 1;
@@ -1305,6 +1972,7 @@ class Josratarifas extends Module
                 if ($cell === '') {
                     if ($had) {
                         $deletes[$idGroup][] = $idProduct;
+                        $history[] = array($idGroup, $idProduct, $existing[$idGroup][$idProduct], null);
                         unset($existing[$idGroup][$idProduct]);
                         ++$stats['deleted'];
                     }
@@ -1321,6 +1989,7 @@ class Josratarifas extends Module
                     continue;
                 }
                 ++$stats[$had ? 'changed' : 'new'];
+                $history[] = array($idGroup, $idProduct, $had ? $existing[$idGroup][$idProduct] : null, $taxExcl);
                 $existing[$idGroup][$idProduct] = $taxExcl;
                 $inserts[] = '(' . (int) $idGroup . ', ' . $idProduct . ', ' . number_format($taxExcl, 6, '.', '') . ', NOW())';
             }
@@ -1343,6 +2012,8 @@ class Josratarifas extends Module
             }
         }
         self::$priceCache = array();
+        $this->logHistory($history, 'csv');
+        $this->purgeHistory();
 
         $names = array();
         foreach (array_unique($tariffCols) as $idGroup) {

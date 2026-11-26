@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.0 — 2026-11-26
+
+- Rejilla: columna con el IVA de cada producto (regla y %).
+- Rejilla: iconos para abrir el producto en la tienda o para editarlo, en pestaña nueva.
+- Tabla de tarifas: botones para ver el grupo con sus clientes o editarlo, en pestaña nueva.
+- Rejilla: avisos en rojo cuando la tarifa vale 0 o es mayor que el PVP, con filtro «Solo con avisos».
+- Rejilla: ordenar pinchando en la cabecera de las columnas, y filtros por categoría (con subcategorías) y por marca.
+- Rellenar en bloque: a todos los productos del filtro, tarifa = PVP u otra tarifa ± %, con redondeo (0,05, 0,10, euro, ,95, ,99), solo a los que no tienen precio o a todos. Primero enseña cuántos cambia y unos ejemplos.
+- Ficha del producto (pestaña Módulos): su precio en cada tarifa, editable ahí mismo con su botón Guardar.
+- Historial de cambios de precio: fecha, empleado, tarifa, antes, después y origen (rejilla, ficha, CSV o rellenar en bloque), con filtros. Se guardan los dos últimos años.
+- Exportar lo filtrado: CSV con los productos del filtro y solo la tarifa elegida, listo para volver a importar.
+- La importación CSV y los ajustes se envían a la misma dirección en la que está abierta la configuración, para que no se pierda el archivo en las redirecciones de PS 8.
+
 ## 1.0.2 — 2026-11-25
 
 - Arreglado: la pestaña «Precios por tarifa» no cargaba los productos y daba «El servidor no ha devuelto una respuesta válida».
